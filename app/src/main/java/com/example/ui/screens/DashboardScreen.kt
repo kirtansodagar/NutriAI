@@ -25,12 +25,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBackIosNew
-import androidx.compose.material.icons.filled.ArrowForwardIos
+import androidx.compose.material.icons.automirrored.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.MonitorWeight
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.WaterDrop
@@ -238,10 +240,99 @@ fun DashboardScreen(
                     modifier = Modifier.size(44.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.ArrowForwardIos,
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForwardIos,
                         contentDescription = "Next Day",
                         tint = TextSecondaryDark
                     )
+                }
+            }
+        }
+
+        // 1b. Cloud Sync status indicator / trigger
+        item {
+            val currentUser by viewModel.currentUser.collectAsState()
+            val isSyncing by viewModel.isSyncing.collectAsState()
+            val syncStatus by viewModel.syncStatus.collectAsState()
+            val supUrl by viewModel.supabaseUrl.collectAsState()
+            val supKey by viewModel.supabaseKey.collectAsState()
+
+            if (currentUser != null && supUrl.isNotBlank() && supKey.isNotBlank()) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .clickable(enabled = !isSyncing) {
+                            viewModel.syncWithSupabase()
+                        },
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSyncing) EmeraldMint.copy(alpha = 0.08f) else CardSlate.copy(alpha = 0.4f)
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, if (isSyncing) EmeraldMint.copy(alpha = 0.4f) else SlateMuted.copy(alpha = 0.3f))
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            if (isSyncing) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(14.dp),
+                                    color = EmeraldMint,
+                                    strokeWidth = 2.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Cloud,
+                                    contentDescription = "Cloud",
+                                    tint = if (syncStatus?.startsWith("Error") == true) CoralRed else EmeraldMint,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = when {
+                                    isSyncing -> "Syncing database with Supabase cloud..."
+                                    syncStatus?.startsWith("Error") == true -> "Sync failed. Tap to retry."
+                                    syncStatus != null -> syncStatus ?: "Cloud sync active"
+                                    else -> "All local logs synced to Supabase"
+                                },
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    color = if (syncStatus?.startsWith("Error") == true) CoralRed else TextPrimaryDark,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            )
+                        }
+
+                        if (!isSyncing) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Sync",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        color = EmeraldMint,
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 11.sp
+                                    )
+                                )
+                                Icon(
+                                    imageVector = Icons.Default.Sync,
+                                    contentDescription = "Sync",
+                                    tint = EmeraldMint,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

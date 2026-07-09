@@ -18,6 +18,18 @@ data class LoggedFood(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+@Entity(tableName = "users")
+data class User(
+    @PrimaryKey val username: String,
+    val email: String,
+    val phoneNumber: String,
+    val passwordHash: String,
+    val salt: String,
+    val pinCode: String? = null,
+    val biometricEnabled: Boolean = false,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
 @Entity(tableName = "user_goals")
 data class UserGoal(
     @PrimaryKey val id: Int = 1,

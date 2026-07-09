@@ -14,6 +14,8 @@ import com.example.data.model.UserGoal
 import com.example.data.model.WaterLog
 import com.example.data.repo.FoodScanResult
 import com.example.data.repo.NutriRepository
+import com.example.data.supabase.SupabaseSyncManager
+import com.example.data.supabase.SyncResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -40,17 +43,108 @@ sealed interface ChatUiState {
     object Sending : ChatUiState
 }
 
+sealed interface AuthUiState {
+    object Idle : AuthUiState
+    object Loading : AuthUiState
+    data class Success(val message: String) : AuthUiState
+    data class Error(val message: String) : AuthUiState
+}
+
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class NutriViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = androidx.room.Room.databaseBuilder(
         application,
         NutriDatabase::class.java,
         "nutri_db"
-    ).fallbackToDestructiveMigration().build()
+    ).fallbackToDestructiveMigration(dropAllTables = true).build()
 
     private val repository = NutriRepository(db.nutriDao())
 
     val apiKey: String = BuildConfig.GEMINI_API_KEY
+
+    // Secure local session storage
+    private val prefs = application.getSharedPreferences("nutri_prefs", android.content.Context.MODE_PRIVATE)
+
+    private val _currentUser = MutableStateFlow<com.example.data.model.User?>(null)
+    val currentUser: StateFlow<com.example.data.model.User?> = _currentUser.asStateFlow()
+
+    private val _authUiState = MutableStateFlow<AuthUiState>(AuthUiState.Idle)
+    val authUiState: StateFlow<AuthUiState> = _authUiState.asStateFlow()
+
+    private val _pinLockRequired = MutableStateFlow(false)
+    val pinLockRequired: StateFlow<Boolean> = _pinLockRequired.asStateFlow()
+
+    // Supabase Cloud Synchronization State
+    private val _supabaseUrl = MutableStateFlow(prefs.getString("supabase_url", "") ?: "")
+    val supabaseUrl: StateFlow<String> = _supabaseUrl.asStateFlow()
+
+    private val _supabaseKey = MutableStateFlow(prefs.getString("supabase_key", "") ?: "")
+    val supabaseKey: StateFlow<String> = _supabaseKey.asStateFlow()
+
+    private val _syncStatus = MutableStateFlow<String?>(null)
+    val syncStatus: StateFlow<String?> = _syncStatus.asStateFlow()
+
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
+
+    fun updateSupabaseCredentials(url: String, key: String) {
+        _supabaseUrl.value = url.trim()
+        _supabaseKey.value = key.trim()
+        prefs.edit()
+            .putString("supabase_url", url.trim())
+            .putString("supabase_key", key.trim())
+            .apply()
+    }
+
+    fun syncWithSupabase() {
+        val url = _supabaseUrl.value
+        val key = _supabaseKey.value
+        val username = _currentUser.value?.username ?: ""
+
+        if (url.isBlank() || key.isBlank()) {
+            _syncStatus.value = "Error: Supabase URL and Anon Key are required."
+            return
+        }
+        if (username.isBlank()) {
+            _syncStatus.value = "Error: You must be logged in to sync data."
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _isSyncing.value = true
+            _syncStatus.value = "Synchronizing with Supabase..."
+            val result = SupabaseSyncManager.syncAll(
+                getApplication(),
+                url,
+                key,
+                username,
+                repository
+            )
+            _isSyncing.value = false
+            when (result) {
+                is SyncResult.Success -> {
+                    _syncStatus.value = result.message
+                }
+                is SyncResult.Error -> {
+                    _syncStatus.value = "Error: ${result.message}"
+                }
+            }
+        }
+    }
+
+    fun testSupabaseConnection(url: String, key: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val success = SupabaseSyncManager.testConnection(url, key)
+            withContext(Dispatchers.Main) {
+                onResult(success)
+            }
+        }
+    }
+
+    fun clearSyncStatus() {
+        _syncStatus.value = null
+    }
 
     fun getApiKeyToUse(): String {
         val customKey = userGoal.value.customApiKey
@@ -106,8 +200,8 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
     init {
         // Pre-populate with welcome message from AI Coach if chat is empty
         viewModelScope.launch(Dispatchers.IO) {
-            val goal = repository.getUserGoalOnce()
-            if (goal == null) {
+            val dbGoal = db.nutriDao().getUserGoalOnce()
+            if (dbGoal == null) {
                 // Initialize default goal
                 repository.saveUserGoal(UserGoal())
             }
@@ -122,6 +216,331 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+
+        // Restore active user session from preferences securely
+        val savedUsername = prefs.getString("logged_in_user", null)
+        if (savedUsername != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val user = repository.getUserByUsername(savedUsername)
+                if (user != null) {
+                    _currentUser.value = user
+                    if (!user.pinCode.isNullOrEmpty()) {
+                        _pinLockRequired.value = true
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Authentication & Security Methods ---
+
+    private val _activeOtpCode = MutableStateFlow<String?>(null)
+    val activeOtpCode: StateFlow<String?> = _activeOtpCode.asStateFlow()
+
+    private val _otpPhoneNumber = MutableStateFlow<String?>(null)
+    val otpPhoneNumber: StateFlow<String?> = _otpPhoneNumber.asStateFlow()
+
+    fun registerUser(
+        username: String,
+        email: String,
+        phoneNumber: String,
+        password: String,
+        onResult: (Boolean, String) -> Unit
+    ) {
+        val trimmedUser = username.trim()
+        val trimmedEmail = email.trim()
+        val trimmedPhone = phoneNumber.trim().filter { it.isDigit() || it == '+' }
+
+        if (trimmedUser.isBlank() || trimmedEmail.isBlank() || password.isBlank()) {
+            onResult(false, "Username, Email, and Password are required.")
+            return
+        }
+        if (trimmedUser.length < 3) {
+            onResult(false, "Username must be at least 3 characters.")
+            return
+        }
+        if (!trimmedEmail.contains("@") || !trimmedEmail.contains(".")) {
+            onResult(false, "Please enter a valid email address.")
+            return
+        }
+        if (trimmedPhone.isNotBlank() && trimmedPhone.length < 7) {
+            onResult(false, "Please enter a valid phone number (min 7 digits).")
+            return
+        }
+        if (password.length < 6) {
+            onResult(false, "Password must be at least 6 characters.")
+            return
+        }
+
+        _authUiState.value = AuthUiState.Loading
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Check if username already exists
+                val existingByUsername = repository.getUserByUsername(trimmedUser)
+                if (existingByUsername != null) {
+                    _authUiState.value = AuthUiState.Error("Username already exists.")
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "Username already exists.")
+                    }
+                    return@launch
+                }
+
+                // Check if email already exists
+                val existingByEmail = repository.getUserByEmail(trimmedEmail)
+                if (existingByEmail != null) {
+                    _authUiState.value = AuthUiState.Error("Email already registered.")
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "Email is already registered.")
+                    }
+                    return@launch
+                }
+
+                // Check if phone number already exists (only if provided)
+                if (trimmedPhone.isNotBlank()) {
+                    val existingByPhone = repository.getUserByPhone(trimmedPhone)
+                    if (existingByPhone != null) {
+                        _authUiState.value = AuthUiState.Error("Phone number already registered.")
+                        withContext(Dispatchers.Main) {
+                            onResult(false, "Phone number is already registered.")
+                        }
+                        return@launch
+                    }
+                }
+
+                val salt = com.example.data.security.SecurityHelper.generateSalt()
+                val hash = com.example.data.security.SecurityHelper.hashPassword(password, salt)
+
+                val newUser = com.example.data.model.User(
+                    username = trimmedUser,
+                    email = trimmedEmail,
+                    phoneNumber = trimmedPhone,
+                    passwordHash = hash,
+                    salt = salt,
+                    pinCode = null,
+                    biometricEnabled = false
+                )
+                repository.insertUser(newUser)
+                
+                // Save login session locally so they stay logged in
+                prefs.edit().putString("logged_in_user", newUser.username).apply()
+                _currentUser.value = newUser
+                
+                _authUiState.value = AuthUiState.Success("Registered successfully!")
+                withContext(Dispatchers.Main) {
+                    onResult(true, "Profile created successfully! Welcome, ${newUser.username}!")
+                }
+            } catch (e: Exception) {
+                _authUiState.value = AuthUiState.Error(e.localizedMessage ?: "Registration failed")
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Registration failed: ${e.localizedMessage}")
+                }
+            }
+        }
+    }
+
+    fun loginUser(identifier: String, password: String, rememberMe: Boolean, onResult: (Boolean, String) -> Unit) {
+        val trimmedId = identifier.trim()
+        if (trimmedId.isBlank() || password.isBlank()) {
+            onResult(false, "Credentials and password cannot be empty.")
+            return
+        }
+
+        _authUiState.value = AuthUiState.Loading
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Attempt to find user by username, email, or phone number dynamically
+                var user = repository.getUserByUsername(trimmedId)
+                if (user == null) {
+                    user = repository.getUserByEmail(trimmedId)
+                }
+                if (user == null) {
+                    val cleanPhone = trimmedId.filter { it.isDigit() || it == '+' }
+                    if (cleanPhone.isNotEmpty()) {
+                        user = repository.getUserByPhone(cleanPhone)
+                    }
+                }
+
+                if (user == null) {
+                    _authUiState.value = AuthUiState.Error("Invalid credentials or password.")
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "Invalid credentials or password.")
+                    }
+                    return@launch
+                }
+
+                val isValid = com.example.data.security.SecurityHelper.verifyPassword(
+                    password = password,
+                    salt = user.salt,
+                    storedHash = user.passwordHash
+                )
+
+                if (isValid) {
+                    _currentUser.value = user
+                    if (rememberMe) {
+                        prefs.edit().putString("logged_in_user", user.username).apply()
+                    } else {
+                        prefs.edit().remove("logged_in_user").apply()
+                    }
+                    _authUiState.value = AuthUiState.Success("Logged in successfully!")
+                    
+                    if (!user.pinCode.isNullOrEmpty()) {
+                        _pinLockRequired.value = true
+                    } else {
+                        _pinLockRequired.value = false
+                    }
+                    withContext(Dispatchers.Main) {
+                        onResult(true, "Welcome back, ${user.username}!")
+                    }
+                } else {
+                    _authUiState.value = AuthUiState.Error("Invalid credentials or password.")
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "Invalid credentials or password.")
+                    }
+                }
+            } catch (e: Exception) {
+                _authUiState.value = AuthUiState.Error(e.localizedMessage ?: "Login failed")
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Login failed: ${e.localizedMessage}")
+                }
+            }
+        }
+    }
+
+    fun requestOtp(phoneNumber: String, onResult: (Boolean, String) -> Unit) {
+        val cleanPhone = phoneNumber.trim().filter { it.isDigit() || it == '+' }
+        if (cleanPhone.length < 7) {
+            onResult(false, "Please enter a valid phone number.")
+            return
+        }
+
+        _authUiState.value = AuthUiState.Loading
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val user = repository.getUserByPhone(cleanPhone)
+                if (user == null) {
+                    _authUiState.value = AuthUiState.Error("No user registered with this phone number.")
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "No account exists for this phone number. Please register first.")
+                    }
+                    return@launch
+                }
+
+                // Generate random 6-digit OTP code
+                val randomCode = (100000..999999).random().toString()
+                _activeOtpCode.value = randomCode
+                _otpPhoneNumber.value = cleanPhone
+                
+                _authUiState.value = AuthUiState.Idle
+                withContext(Dispatchers.Main) {
+                    onResult(true, randomCode)
+                }
+            } catch (e: Exception) {
+                _authUiState.value = AuthUiState.Error(e.localizedMessage ?: "OTP request failed")
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Failed to send code: ${e.localizedMessage}")
+                }
+            }
+        }
+    }
+
+    fun verifyOtp(enteredCode: String, rememberMe: Boolean, onResult: (Boolean, String) -> Unit) {
+        val expected = _activeOtpCode.value
+        val phone = _otpPhoneNumber.value
+        if (expected == null || phone == null) {
+            onResult(false, "Session expired. Please request a new OTP.")
+            return
+        }
+
+        if (enteredCode.trim() != expected) {
+            onResult(false, "Incorrect verification code. Please check and try again.")
+            return
+        }
+
+        _authUiState.value = AuthUiState.Loading
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val user = repository.getUserByPhone(phone)
+                if (user != null) {
+                    _currentUser.value = user
+                    if (rememberMe) {
+                        prefs.edit().putString("logged_in_user", user.username).apply()
+                    } else {
+                        prefs.edit().remove("logged_in_user").apply()
+                    }
+                    _activeOtpCode.value = null
+                    _otpPhoneNumber.value = null
+                    _authUiState.value = AuthUiState.Success("Logged in successfully!")
+                    
+                    if (!user.pinCode.isNullOrEmpty()) {
+                        _pinLockRequired.value = true
+                    } else {
+                        _pinLockRequired.value = false
+                    }
+                    withContext(Dispatchers.Main) {
+                        onResult(true, "Welcome back, ${user.username}!")
+                    }
+                } else {
+                    _authUiState.value = AuthUiState.Error("User record not found.")
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "User not found.")
+                    }
+                }
+            } catch (e: Exception) {
+                _authUiState.value = AuthUiState.Error(e.localizedMessage ?: "OTP Verification failed")
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Verification error: ${e.localizedMessage}")
+                }
+            }
+        }
+    }
+
+    fun cancelOtpSession() {
+        _activeOtpCode.value = null
+        _otpPhoneNumber.value = null
+        _authUiState.value = AuthUiState.Idle
+    }
+
+    fun logoutUser() {
+        _currentUser.value = null
+        _pinLockRequired.value = false
+        prefs.edit().remove("logged_in_user").apply()
+        _authUiState.value = AuthUiState.Idle
+    }
+
+    fun setPinCode(pin: String?) {
+        val user = _currentUser.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val updatedUser = user.copy(pinCode = pin)
+            repository.insertUser(updatedUser)
+            _currentUser.value = updatedUser
+        }
+    }
+
+    fun verifyPin(pin: String): Boolean {
+        val user = _currentUser.value ?: return false
+        return if (user.pinCode == pin) {
+            _pinLockRequired.value = false
+            true
+        } else {
+            false
+        }
+    }
+
+    fun unlockWithBiometrics() {
+        _pinLockRequired.value = false
+    }
+
+    fun toggleBiometrics(enabled: Boolean) {
+        val user = _currentUser.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val updatedUser = user.copy(biometricEnabled = enabled)
+            repository.insertUser(updatedUser)
+            _currentUser.value = updatedUser
+        }
+    }
+
+    fun clearAuthError() {
+        _authUiState.value = AuthUiState.Idle
     }
 
     // Helper to get today's date
@@ -170,12 +589,14 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                 dateString = _selectedDate.value
             )
             repository.insertFood(food)
+            triggerSilentBackgroundSync()
         }
     }
 
     fun deleteFood(foodId: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteFoodById(foodId)
+            triggerSilentBackgroundSync()
         }
     }
 
@@ -187,12 +608,14 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                 dateString = _selectedDate.value
             )
             repository.insertWaterLog(log)
+            triggerSilentBackgroundSync()
         }
     }
 
     fun removeLastWater() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteLastWaterLog(_selectedDate.value)
+            triggerSilentBackgroundSync()
         }
     }
 
@@ -309,6 +732,7 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                 isPositive = isPositive
             )
             repository.insertFeedback(fb)
+            triggerSilentBackgroundSync()
         }
     }
 
@@ -333,12 +757,14 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                 targetWeightKg = goal.targetWeightKg,
                 customApiKey = goal.customApiKey
             )
+            triggerSilentBackgroundSync()
         }
     }
 
     fun deleteWeightLog(id: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteWeightLogById(id)
+            triggerSilentBackgroundSync()
         }
     }
 
@@ -372,6 +798,7 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 repository.insertFood(food)
                 _quickLogState.value = ScanUiState.Success(result)
+                triggerSilentBackgroundSync()
             }
         }
     }
@@ -383,6 +810,7 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             repository.insertChatMessage(userMsg)
+            triggerSilentBackgroundSync()
 
             val activeKey = getApiKeyToUse()
             if (activeKey.isEmpty() || activeKey == "MY_GEMINI_API_KEY") {
@@ -393,6 +821,7 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
                 _chatUiState.value = ChatUiState.Idle
+                triggerSilentBackgroundSync()
                 return@launch
             }
 
@@ -418,6 +847,7 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             _chatUiState.value = ChatUiState.Idle
+            triggerSilentBackgroundSync()
         }
     }
 
@@ -431,6 +861,7 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                     message = "Hi! Let's start fresh. Tell me what you ate today or ask me a nutrition question!"
                 )
             )
+            triggerSilentBackgroundSync()
         }
     }
 
@@ -438,7 +869,9 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
     fun testApiKey(keyToTest: String, onResult: (success: Boolean, message: String) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             if (keyToTest.isBlank()) {
-                onResult(false, "API key cannot be empty.")
+                withContext(Dispatchers.Main) {
+                    onResult(false, "API key cannot be empty.")
+                }
                 return@launch
             }
             try {
@@ -455,13 +888,19 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 val hasCandidates = !response.candidates.isNullOrEmpty()
                 if (hasCandidates) {
-                    onResult(true, "Key verified successfully! Connection is live and active.")
+                    withContext(Dispatchers.Main) {
+                        onResult(true, "Key verified successfully! Connection is live and active.")
+                    }
                 } else {
-                    onResult(false, "API returned an empty candidates block. Please check details.")
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "API returned an empty candidates block. Please check details.")
+                    }
                 }
             } catch (e: Exception) {
                 val msg = e.localizedMessage ?: e.message ?: "404 Not Found or Invalid Key"
-                onResult(false, "Validation failed: $msg")
+                withContext(Dispatchers.Main) {
+                    onResult(false, "Validation failed: $msg")
+                }
             }
         }
     }
@@ -488,5 +927,27 @@ class NutriViewModel(application: Application) : AndroidViewModel(application) {
         resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 75, outputStream)
         val byteArray = outputStream.toByteArray()
         return Base64.encodeToString(byteArray, Base64.NO_WRAP)
+    }
+
+    private fun triggerSilentBackgroundSync() {
+        val url = _supabaseUrl.value
+        val key = _supabaseKey.value
+        val username = _currentUser.value?.username ?: ""
+
+        if (url.isNotBlank() && key.isNotBlank() && username.isNotBlank()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    SupabaseSyncManager.syncAll(
+                        getApplication(),
+                        url,
+                        key,
+                        username,
+                        repository
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("SilentSync", "Background sync failed", e)
+                }
+            }
+        }
     }
 }

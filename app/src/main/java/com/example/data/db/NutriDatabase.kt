@@ -77,11 +77,51 @@ interface NutriDao {
 
     @Query("DELETE FROM weight_logs WHERE id = :id")
     suspend fun deleteWeightLogById(id: Int)
+
+    // Users
+    @Query("SELECT * FROM users WHERE username = :username LIMIT 1")
+    suspend fun getUserByUsername(username: String): com.example.data.model.User?
+
+    @Query("SELECT * FROM users WHERE email = :email LIMIT 1")
+    suspend fun getUserByEmail(email: String): com.example.data.model.User?
+
+    @Query("SELECT * FROM users WHERE phoneNumber = :phoneNumber LIMIT 1")
+    suspend fun getUserByPhone(phoneNumber: String): com.example.data.model.User?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertUser(user: com.example.data.model.User)
+
+    // Bulk retrievals for Cloud Synchronization
+    @Query("SELECT * FROM logged_foods")
+    suspend fun getAllFoodsOnce(): List<LoggedFood>
+
+    @Query("SELECT * FROM water_logs")
+    suspend fun getAllWaterLogsOnce(): List<WaterLog>
+
+    @Query("SELECT * FROM weight_logs")
+    suspend fun getAllWeightLogsOnce(): List<com.example.data.model.WeightLog>
+
+    @Query("SELECT * FROM chat_messages")
+    suspend fun getAllChatMessagesOnce(): List<ChatMessage>
+
+    @Query("SELECT * FROM scan_feedbacks")
+    suspend fun getAllFeedbacksOnce(): List<com.example.data.model.ScanFeedback>
+
+    @Query("SELECT * FROM users")
+    suspend fun getAllUsersOnce(): List<com.example.data.model.User>
 }
 
 @Database(
-    entities = [LoggedFood::class, UserGoal::class, WaterLog::class, ChatMessage::class, com.example.data.model.ScanFeedback::class, com.example.data.model.WeightLog::class],
-    version = 4,
+    entities = [
+        LoggedFood::class, 
+        UserGoal::class, 
+        WaterLog::class, 
+        ChatMessage::class, 
+        com.example.data.model.ScanFeedback::class, 
+        com.example.data.model.WeightLog::class,
+        com.example.data.model.User::class
+    ],
+    version = 6,
     exportSchema = false
 )
 abstract class NutriDatabase : RoomDatabase() {

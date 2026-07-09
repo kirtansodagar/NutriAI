@@ -44,6 +44,10 @@ import com.example.ui.screens.ScanScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.NutriViewModel
 
+import androidx.compose.runtime.collectAsState
+import com.example.ui.screens.AuthScreen
+import com.example.ui.screens.PinLockScreen
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,31 +75,89 @@ sealed class Screen(
 
 @Composable
 fun MainAppLayout(viewModel: NutriViewModel) {
-    val navController = rememberNavController()
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route
+    val currentUser by viewModel.currentUser.collectAsState()
+    val pinLockRequired by viewModel.pinLockRequired.collectAsState()
 
-    val navItems = listOf(
-        Screen.Dashboard,
-        Screen.Scan,
-        Screen.Coach,
-        Screen.Profile
-    )
+    if (currentUser == null) {
+        // Gatekeep with secure Login / Sign Up screen
+        AuthScreen(viewModel = viewModel)
+    } else if (pinLockRequired) {
+        // Gatekeep with PIN verification
+        PinLockScreen(viewModel = viewModel)
+    } else {
+        // Normal authenticated state
+        val navController = rememberNavController()
+        val navBackStackEntry by navController.currentBackStackEntryAsState()
+        val currentRoute = navBackStackEntry?.destination?.route
 
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        bottomBar = {
-            NavigationBar(
-                containerColor = Color(0xFF0F172A), // Dark Slate (Cal AI backdrop)
-                contentColor = Color.White
+        val navItems = listOf(
+            Screen.Dashboard,
+            Screen.Scan,
+            Screen.Coach,
+            Screen.Profile
+        )
+
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            bottomBar = {
+                NavigationBar(
+                    containerColor = Color(0xFF0F172A), // Dark Slate (Cal AI backdrop)
+                    contentColor = Color.White
+                ) {
+                    navItems.forEach { screen ->
+                        val selected = currentRoute == screen.route
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = {
+                                if (currentRoute != screen.route) {
+                                    navController.navigate(screen.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
+                                    }
+                                }
+                            },
+                            icon = {
+                                Icon(
+                                    imageVector = if (selected) screen.filledIcon else screen.outlinedIcon,
+                                    contentDescription = screen.title,
+                                    tint = if (selected) Color(0xFF10B981) else Color(0xFF94A3B8) // Emerald vs Slate
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = screen.title,
+                                    color = if (selected) Color.White else Color(0xFF94A3B8),
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                    fontSize = 11.sp
+                                )
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                indicatorColor = Color(0xFF10B981).copy(alpha = 0.15f) // Emerald glowing backdrop
+                            ),
+                            modifier = Modifier.testTag("nav_item_${screen.route}")
+                        )
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0F172A)) // Uniform deep slate backdrop
+                    .padding(innerPadding)
             ) {
-                navItems.forEach { screen ->
-                    val selected = currentRoute == screen.route
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = {
-                            if (currentRoute != screen.route) {
-                                navController.navigate(screen.route) {
+                NavHost(
+                    navController = navController,
+                    startDestination = Screen.Dashboard.route
+                ) {
+                    composable(Screen.Dashboard.route) {
+                        DashboardScreen(
+                            viewModel = viewModel,
+                            onNavigateToScan = {
+                                navController.navigate(Screen.Scan.route) {
                                     popUpTo(navController.graph.findStartDestination().id) {
                                         saveState = true
                                     }
@@ -103,63 +165,17 @@ fun MainAppLayout(viewModel: NutriViewModel) {
                                     restoreState = true
                                 }
                             }
-                        },
-                        icon = {
-                            Icon(
-                                imageVector = if (selected) screen.filledIcon else screen.outlinedIcon,
-                                contentDescription = screen.title,
-                                tint = if (selected) Color(0xFF10B981) else Color(0xFF94A3B8) // Emerald vs Slate
-                            )
-                        },
-                        label = {
-                            Text(
-                                text = screen.title,
-                                color = if (selected) Color.White else Color(0xFF94A3B8),
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                fontSize = 11.sp
-                            )
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            indicatorColor = Color(0xFF10B981).copy(alpha = 0.15f) // Emerald glowing backdrop
-                        ),
-                        modifier = Modifier.testTag("nav_item_${screen.route}")
-                    )
-                }
-            }
-        }
-    ) { innerPadding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFF0F172A)) // Uniform deep slate backdrop
-                .padding(innerPadding)
-        ) {
-            NavHost(
-                navController = navController,
-                startDestination = Screen.Dashboard.route
-            ) {
-                composable(Screen.Dashboard.route) {
-                    DashboardScreen(
-                        viewModel = viewModel,
-                        onNavigateToScan = {
-                            navController.navigate(Screen.Scan.route) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
-                                }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        }
-                    )
-                }
-                composable(Screen.Scan.route) {
-                    ScanScreen(viewModel = viewModel)
-                }
-                composable(Screen.Coach.route) {
-                    ChatCoachScreen(viewModel = viewModel)
-                }
-                composable(Screen.Profile.route) {
-                    ProfileScreen(viewModel = viewModel)
+                        )
+                    }
+                    composable(Screen.Scan.route) {
+                        ScanScreen(viewModel = viewModel)
+                    }
+                    composable(Screen.Coach.route) {
+                        ChatCoachScreen(viewModel = viewModel)
+                    }
+                    composable(Screen.Profile.route) {
+                        ProfileScreen(viewModel = viewModel)
+                    }
                 }
             }
         }

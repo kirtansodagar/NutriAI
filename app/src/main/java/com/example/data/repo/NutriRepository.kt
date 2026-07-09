@@ -320,4 +320,18 @@ class NutriRepository(private val nutriDao: NutriDao) {
         }
         return cleaned.trim()
     }
+
+    // Users authentication persistence
+    suspend fun getUserByUsername(username: String): com.example.data.model.User? = nutriDao.getUserByUsername(username)
+    suspend fun getUserByEmail(email: String): com.example.data.model.User? = nutriDao.getUserByEmail(email)
+    suspend fun getUserByPhone(phoneNumber: String): com.example.data.model.User? = nutriDao.getUserByPhone(phoneNumber)
+    suspend fun insertUser(user: com.example.data.model.User) = nutriDao.insertUser(user)
+
+    // Bulk retrievals for Cloud Synchronization
+    suspend fun getAllFoodsOnce(): List<LoggedFood> = nutriDao.getAllFoodsOnce()
+    suspend fun getAllWaterLogsOnce(): List<WaterLog> = nutriDao.getAllWaterLogsOnce()
+    suspend fun getAllWeightLogsOnce(): List<com.example.data.model.WeightLog> = nutriDao.getAllWeightLogsOnce()
+    suspend fun getAllChatMessagesOnce(): List<ChatMessage> = nutriDao.getAllChatMessagesOnce()
+    suspend fun getAllFeedbacksOnce(): List<com.example.data.model.ScanFeedback> = nutriDao.getAllFeedbacksOnce()
+    suspend fun getAllUsersOnce(): List<com.example.data.model.User> = nutriDao.getAllUsersOnce()
 }

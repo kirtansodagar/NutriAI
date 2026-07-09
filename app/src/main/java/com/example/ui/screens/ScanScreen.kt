@@ -168,9 +168,12 @@ fun ScanScreen(
     ) { uri: Uri? ->
         uri?.let {
             try {
-                val bitmap = MediaStore.Images.Media.getBitmap(context.contentResolver, it)
-                selectedBitmap = bitmap
-                viewModel.scanFoodImage(bitmap)
+                val inputStream = context.contentResolver.openInputStream(it)
+                val bitmap = android.graphics.BitmapFactory.decodeStream(inputStream)
+                if (bitmap != null) {
+                    selectedBitmap = bitmap
+                    viewModel.scanFoodImage(bitmap)
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }

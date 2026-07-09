@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,6 +56,7 @@ fun ProfileScreen(
     modifier: Modifier = Modifier
 ) {
     val goal by viewModel.userGoal.collectAsState()
+    val currentUser by viewModel.currentUser.collectAsState()
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
 
@@ -351,7 +353,7 @@ fun ProfileScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.DirectionsRun,
+                                    imageVector = Icons.AutoMirrored.Filled.DirectionsRun,
                                     contentDescription = null,
                                     tint = DeepSkyBlue,
                                     modifier = Modifier.size(24.dp)
@@ -675,9 +677,9 @@ fun ProfileScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             listOf(
-                                Triple("Weight Loss", "Deficit (-500)", Icons.Default.TrendingDown),
+                                Triple("Weight Loss", "Deficit (-500)", Icons.AutoMirrored.Filled.TrendingDown),
                                 Triple("Maintain", "Balance (TDEE)", Icons.Default.Refresh),
-                                Triple("Muscle Gain", "Surplus (+350)", Icons.Default.TrendingUp)
+                                Triple("Muscle Gain", "Surplus (+350)", Icons.AutoMirrored.Filled.TrendingUp)
                             ).forEach { (goalType, subtitle, icon) ->
                                 val isSelected = selectedGoalType.lowercase() == goalType.lowercase()
                                 Card(
@@ -742,7 +744,7 @@ fun ProfileScreen(
                         ) {
                             listOf(
                                 Triple("Sedentary", "1.2x (Desk)", Icons.Default.Bed),
-                                Triple("Moderate", "1.55x (Active)", Icons.Default.DirectionsWalk),
+                                Triple("Moderate", "1.55x (Active)", Icons.AutoMirrored.Filled.DirectionsWalk),
                                 Triple("Active", "1.725x (Athlete)", Icons.Default.FlashOn)
                             ).forEach { (act, subtitle, icon) ->
                                 val isSelected = selectedActivityLevel.lowercase() == act.lowercase()
@@ -1077,6 +1079,636 @@ fun ProfileScreen(
                             }
                             else -> {}
                         }
+                    }
+                }
+            }
+        }
+
+        // Security & Privacy Card
+        item {
+            val user = currentUser
+            if (user != null) {
+                var pinCodeInput by remember(user.pinCode) { mutableStateOf(user.pinCode ?: "") }
+                var showPinEdit by remember { mutableStateOf(false) }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardSlate),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(CoralRed.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shield,
+                                    contentDescription = null,
+                                    tint = CoralRed,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Security & Privacy Lock",
+                                style = MaterialTheme.typography.titleSmall.copy(
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            )
+                        }
+
+                        Text(
+                            text = "Protect your visual scan history and nutrition tracking logs on this device with secure lock features.",
+                            style = MaterialTheme.typography.bodySmall.copy(color = TextSecondaryDark, fontSize = 12.sp, lineHeight = 16.sp)
+                        )
+
+                         // Credentials Profile Details
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(SlateDark.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "Profile Credentials",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, color = EmeraldMint)
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "Username: ${user.username}",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "Email: ${user.email}",
+                                color = TextSecondaryDark,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                text = "Phone Number: ${user.phoneNumber}",
+                                color = TextSecondaryDark,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(TextSecondaryDark.copy(alpha = 0.2f)))
+
+                        // Supabase Cloud Sync Section
+                        var supUrlInput by remember { mutableStateOf(viewModel.supabaseUrl.value) }
+                        var supKeyInput by remember { mutableStateOf(viewModel.supabaseKey.value) }
+                        var keyVisible by remember { mutableStateOf(false) }
+                        var isTestingConn by remember { mutableStateOf(false) }
+                        var testResultMsg by remember { mutableStateOf<String?>(null) }
+                        var testResultSuccess by remember { mutableStateOf(false) }
+                        var showSqlHelp by remember { mutableStateOf(false) }
+
+                        val isSyncing by viewModel.isSyncing.collectAsState()
+                        val syncStatus by viewModel.syncStatus.collectAsState()
+                        val context = androidx.compose.ui.platform.LocalContext.current
+
+                        val supabaseUrlState by viewModel.supabaseUrl.collectAsState()
+                        val supabaseKeyState by viewModel.supabaseKey.collectAsState()
+
+                        LaunchedEffect(supabaseUrlState) {
+                            supUrlInput = supabaseUrlState
+                        }
+                        LaunchedEffect(supabaseKeyState) {
+                            supKeyInput = supabaseKeyState
+                        }
+
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(SlateDark.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
+                                .padding(14.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Cloud,
+                                        contentDescription = "Cloud",
+                                        tint = EmeraldMint,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Supabase Cloud Sync",
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { showSqlHelp = !showSqlHelp },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = if (showSqlHelp) Icons.AutoMirrored.Filled.Help else Icons.AutoMirrored.Filled.HelpOutline,
+                                        contentDescription = "SQL Help",
+                                        tint = TextSecondaryDark,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+
+                            Text(
+                                text = "Synchronize your profile, water intakes, calories, weights, and chat coach logs across devices using your own private Supabase PostgreSQL database.",
+                                style = MaterialTheme.typography.bodySmall.copy(color = TextSecondaryDark, fontSize = 11.sp, lineHeight = 14.sp)
+                            )
+
+                            // URL Input
+                            OutlinedTextField(
+                                value = supUrlInput,
+                                onValueChange = { supUrlInput = it },
+                                label = { Text("Supabase URL", color = TextSecondaryDark) },
+                                placeholder = { Text("https://xxx.supabase.co", color = TextSecondaryDark.copy(alpha = 0.4f)) },
+                                modifier = Modifier.fillMaxWidth().testTag("supabase_url_input"),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = EmeraldMint,
+                                    unfocusedBorderColor = TextSecondaryDark.copy(alpha = 0.3f),
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                singleLine = true
+                            )
+
+                            // Key Input
+                            OutlinedTextField(
+                                value = supKeyInput,
+                                onValueChange = { supKeyInput = it },
+                                label = { Text("Supabase Anon Key", color = TextSecondaryDark) },
+                                placeholder = { Text("eyJhbGciOi...", color = TextSecondaryDark.copy(alpha = 0.4f)) },
+                                modifier = Modifier.fillMaxWidth().testTag("supabase_key_input"),
+                                visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                                trailingIcon = {
+                                    IconButton(onClick = { keyVisible = !keyVisible }) {
+                                        Icon(
+                                            imageVector = if (keyVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                            contentDescription = "Toggle Key Visibility",
+                                            tint = TextSecondaryDark
+                                        )
+                                    }
+                                },
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = EmeraldMint,
+                                    unfocusedBorderColor = TextSecondaryDark.copy(alpha = 0.3f),
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                textStyle = MaterialTheme.typography.bodySmall,
+                                singleLine = true
+                            )
+
+                            // Action buttons
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // Save & Test button
+                                Button(
+                                    onClick = {
+                                        viewModel.updateSupabaseCredentials(supUrlInput, supKeyInput)
+                                        isTestingConn = true
+                                        testResultMsg = "Testing..."
+                                        viewModel.testSupabaseConnection(supUrlInput, supKeyInput) { success ->
+                                            isTestingConn = false
+                                            testResultSuccess = success
+                                            testResultMsg = if (success) "Connection success!" else "Connection failed. Please verify URL and Key."
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f).testTag("test_connection_button"),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = SlateDark,
+                                        contentColor = Color.White
+                                    ),
+                                    contentPadding = PaddingValues(vertical = 10.dp),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text(
+                                        text = if (isTestingConn) "Testing..." else "Test & Save",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                }
+
+                                // Sync Now Button
+                                Button(
+                                    onClick = {
+                                        viewModel.updateSupabaseCredentials(supUrlInput, supKeyInput)
+                                        viewModel.syncWithSupabase()
+                                    },
+                                    modifier = Modifier.weight(1f).testTag("sync_supabase_button"),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = EmeraldMint,
+                                        contentColor = SlateDark
+                                    ),
+                                    contentPadding = PaddingValues(vertical = 10.dp),
+                                    shape = RoundedCornerShape(10.dp),
+                                    enabled = !isSyncing
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        if (isSyncing) {
+                                            CircularProgressIndicator(
+                                                modifier = Modifier.size(14.dp),
+                                                color = SlateDark,
+                                                strokeWidth = 2.dp
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Default.Sync,
+                                                contentDescription = "Sync",
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                        }
+                                        Text(
+                                            text = if (isSyncing) "Syncing..." else "Sync Now",
+                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Connection test feedback
+                            testResultMsg?.let { msg ->
+                                Text(
+                                    text = msg,
+                                    color = if (testResultSuccess) EmeraldMint else Color.Red,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
+                                )
+                            }
+
+                            // Sync status feedback
+                            syncStatus?.let { status ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(8.dp))
+                                        .padding(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "Sync Output",
+                                            color = EmeraldMint,
+                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold, fontSize = 10.sp)
+                                        )
+                                        IconButton(
+                                            onClick = { viewModel.clearSyncStatus() },
+                                            modifier = Modifier.size(16.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Dismiss",
+                                                tint = TextSecondaryDark,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+                                    }
+                                    Text(
+                                        text = status,
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp)
+                                    )
+                                }
+                            }
+
+                            // SQL Setup Help Block
+                            AnimatedVisibility(visible = showSqlHelp) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp))
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Setup Instructions:",
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "1. Open your Supabase Dashboard -> SQL Editor.\n2. Paste the SQL setup script below.\n3. Click Run to create all sync tables instantly.",
+                                        color = TextSecondaryDark,
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp, lineHeight = 14.sp)
+                                    )
+
+                                    val sqlScript = """
+                                        -- 1. Create Users Sync Table
+                                        create table if not exists users (
+                                          username text primary key,
+                                          email text,
+                                          phone_number text,
+                                          password_hash text,
+                                          salt text,
+                                          pin_code text,
+                                          biometric_enabled boolean,
+                                          created_at bigint
+                                        );
+
+                                        -- 2. Create Logged Foods Table
+                                        create table if not exists logged_foods (
+                                          id bigint primary key,
+                                          name text,
+                                          meal_type text,
+                                          calories integer,
+                                          protein double precision,
+                                          carbs double precision,
+                                          fat double precision,
+                                          quantity text,
+                                          image_url text,
+                                          date_string text,
+                                          timestamp bigint,
+                                          username text references users(username) on delete cascade
+                                        );
+
+                                        -- 3. Create Water Logs Table
+                                        create table if not exists water_logs (
+                                          id bigint primary key,
+                                          amount_ml integer,
+                                          date_string text,
+                                          timestamp bigint,
+                                          username text references users(username) on delete cascade
+                                        );
+
+                                        -- 4. Create Weight Logs Table
+                                        create table if not exists weight_logs (
+                                          id bigint primary key,
+                                          weight_kg double precision,
+                                          date_string text,
+                                          timestamp bigint,
+                                          username text references users(username) on delete cascade
+                                        );
+
+                                        -- 5. Create Chat Messages Table
+                                        create table if not exists chat_messages (
+                                          id bigint primary key,
+                                          sender text,
+                                          message text,
+                                          timestamp bigint,
+                                          username text references users(username) on delete cascade
+                                        );
+
+                                        -- 6. Create Scan Feedbacks Table
+                                        create table if not exists scan_feedbacks (
+                                          id bigint primary key,
+                                          food_name text,
+                                          original_calories integer,
+                                          corrected_calories integer,
+                                          original_ingredients text,
+                                          corrected_ingredients text,
+                                          feedback_text text,
+                                          is_positive boolean,
+                                          timestamp bigint,
+                                          username text references users(username) on delete cascade
+                                        );
+                                    """.trimIndent()
+
+                                    Button(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                            val clip = android.content.ClipData.newPlainText("Supabase SQL", sqlScript)
+                                            clipboard.setPrimaryClip(clip)
+                                            android.widget.Toast.makeText(context, "SQL copied to clipboard!", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = SlateDark,
+                                            contentColor = EmeraldMint
+                                        ),
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ContentCopy,
+                                                contentDescription = "Copy SQL",
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Copy SQL Setup Script",
+                                                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(TextSecondaryDark.copy(alpha = 0.2f)))
+
+                        // PIN Lock Status/Edit
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "4-Digit PIN Protection",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                                Text(
+                                    text = if (user.pinCode.isNullOrEmpty()) "Disabled (Insecure)" else "Active (Secured)",
+                                    color = if (user.pinCode.isNullOrEmpty()) CoralRed else EmeraldMint,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold)
+                                )
+                            }
+
+                            Button(
+                                onClick = { showPinEdit = !showPinEdit },
+                                colors = ButtonDefaults.buttonColors(containerColor = if (user.pinCode.isNullOrEmpty()) EmeraldMint else CoralRed),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text(
+                                    text = if (user.pinCode.isNullOrEmpty()) "Setup PIN" else "Change / Remove",
+                                    color = Color.Black,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+
+                        AnimatedVisibility(visible = showPinEdit) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = pinCodeInput,
+                                    onValueChange = { input ->
+                                        if (input.all { it.isDigit() } && input.length <= 4) {
+                                            pinCodeInput = input
+                                        }
+                                    },
+                                    label = { Text("Enter 4-Digit Passcode") },
+                                    placeholder = { Text("e.g. 1234") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        focusedBorderColor = EmeraldMint,
+                                        unfocusedBorderColor = TextSecondaryDark.copy(alpha = 0.3f),
+                                        focusedLabelColor = EmeraldMint,
+                                        unfocusedLabelColor = TextSecondaryDark
+                                    ),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            if (pinCodeInput.length == 4) {
+                                                viewModel.setPinCode(pinCodeInput)
+                                                showPinEdit = false
+                                            }
+                                        },
+                                        enabled = pinCodeInput.length == 4,
+                                        colors = ButtonDefaults.buttonColors(containerColor = EmeraldMint),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Save PIN", color = Color.Black, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    if (!user.pinCode.isNullOrEmpty()) {
+                                        Button(
+                                            onClick = {
+                                                viewModel.setPinCode(null)
+                                                pinCodeInput = ""
+                                                showPinEdit = false
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = CoralRed),
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Text("Disable PIN", color = Color.White, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(TextSecondaryDark.copy(alpha = 0.2f)))
+
+                        // Biometrics Switch Row
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Fingerprint,
+                                    contentDescription = null,
+                                    tint = TextSecondaryDark,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Biometric Verification",
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = "Unlock using your fingerprint scanner",
+                                        color = TextSecondaryDark,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+
+                            Switch(
+                                checked = user.biometricEnabled,
+                                onCheckedChange = { viewModel.toggleBiometrics(it) },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = EmeraldMint,
+                                    checkedTrackColor = EmeraldMint.copy(alpha = 0.4f),
+                                    uncheckedThumbColor = TextSecondaryDark,
+                                    uncheckedTrackColor = SlateDark
+                                )
+                            )
+                        }
+
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(TextSecondaryDark.copy(alpha = 0.2f)))
+
+                        // Logout row
+                        Button(
+                            onClick = { viewModel.logoutUser() },
+                            colors = ButtonDefaults.buttonColors(containerColor = CoralRed),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(imageVector = Icons.AutoMirrored.Filled.ExitToApp, contentDescription = "Log Out", tint = Color.White)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Log Out of Session (${user.username})",
+                                    color = Color.White,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    colors = CardDefaults.cardColors(containerColor = CardSlate),
+                    shape = RoundedCornerShape(24.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Currently Guest Session",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Log in to secure your visual food scans and custom biometrics details.",
+                            color = TextSecondaryDark,
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }
