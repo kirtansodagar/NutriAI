@@ -1,4 +1,4 @@
-# Cal AI — Premium AI Nutrition & Weight Tracker
+# NutriAI — Premium AI Nutrition & Weight Tracker
 
 A highly polished, feature-rich **Android application** crafted with **Kotlin** and **Jetpack Compose**. Cal AI combines traditional macro-tracking with state-of-the-art Generative AI to provide a frictionless meal tracking, nutrition advice, and weight monitoring experience.
 
